@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, theme-color=#4361ee" />
+  <meta name="description" content="Secure, offline Image to PDF converter.">
+  <title>Image → PDF Pro</title>
+  
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="manifest.json">
+  
+  <!-- CSP -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' blob: data:; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https:;">
+
+  <!-- Libraries -->
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+  <script src="https://unpkg.com/mammoth/mammoth.browser.min.js"></script>
+
+  <style>
+    :root {
+      --primary: #4361ee;
+      --bg-body: #f5f7fa;
+      --bg-card: #ffffff;
+      --text: #212529;
+      --border: #e9ecef;
+      --radius: 12px;
+      --shadow: 0 4px 15px rgba(0,0,0,0.05);
+    }
+    [data-theme="dark"] {
+      --primary: #4cc9f0;
+      --bg-body: #121212;
+      --bg-card: #1e1e1e;
+      --text: #e0e0e0;
+      --border: #333333;
+    }
+
+    * { box-sizing: border-box; touch-action: manipulation; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-body); color: var(--text); transition: 0.3s; }
+
+    .app-container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+    
+    .card { background: var(--bg-card); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); border: 1px solid var(--border); }
+    .main-grid { display: grid; grid-template-columns: 1fr 300px; gap: 20px; }
+    .tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
+
+    .btn { padding: 10px 18px; border-radius: 8px; border: none; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-secondary { background: var(--bg-card); border: 1px solid var(--border); color: var(--text); }
+    .form-group { margin-bottom: 12px; }
+    .form-control { width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); }
+
+    .drop-area { border: 2px dashed var(--border); padding: 40px; text-align: center; border-radius: var(--radius); cursor: pointer; transition: 0.2s; }
+    .drop-area:hover, .drop-area:focus { border-color: var(--primary); background: rgba(67, 97, 238, 0.05); }
+
+    .thumb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-top: 20px; }
+    .thumb-card { position: relative; background: var(--bg-card); padding: 6px; border: 1px solid var(--border); border-radius: 8px; cursor: grab; }
+    .thumb-img { width: 100%; height: 100px; object-fit: contain; background: #ddd; border-radius: 4px; }
+    .remove-btn { position: absolute; top: -5px; right: -5px; background: red; color: white; border-radius: 50%; width: 20px; height: 20px; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+
+    .hidden { display: none !important; }
+    .progress-bar { height: 4px; background: var(--primary); width: 0%; transition: width 0.3s; }
+    
+    .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.8); display: flex; justify-content: center; align-items: center; z-index: 1000; }
+    .modal-content { background: var(--bg-card); padding: 20px; border-radius: var(--radius); width: 90%; max-width: 500px; }
+    video { width: 100%; border-radius: 8px; background: black; }
+
+    .toast-box { position: fixed; bottom: 20px; right: 20px; z-index: 2000; display: flex; flex-direction: column; gap: 10px; }
+    .toast { background: #333; color: #fff; padding: 12px 20px; border-radius: 8px; display: flex; justify-content: space-between; min-width: 250px; animation: slideUp 0.3s ease; }
+    @keyframes slideUp { from { transform: translateY(100%); opacity:0; } to { transform: translateY(0); opacity:1; } }
+
+    @media (max-width: 768px) { .main-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+  <input type="file" id="inpImage" accept="image/*" multiple hidden>
+  <input type="file" id="inpPdf" accept="application/pdf" multiple hidden>
+  <input type="file" id="inpWord" accept=".docx" multiple hidden>
+
+  <div class="app-container">
+    <header class="header">
+      <div>
+        <h1 style="margin:0; font-size:1.5rem;">Image → PDF Pro</h1>
+        <small id="statusText" style="opacity:0.7">Ready</small>
+      </div>
+      <div>
+        <button id="installBtn" class="btn btn-primary hidden">Install</button>
+        <button id="themeToggle" class="btn btn-secondary">🌙</button>
+      </div>
+    </header>
+
+    <div id="updateBanner" class="card hidden" style="background: var(--primary); color:white; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center;">
+      <span>New update available!</span>
+      <button id="btnRefresh" style="background:white; color:var(--primary); border:none; padding:5px 10px; border-radius:4px; cursor:pointer;">Refresh</button>
+    </div>
+
+    <div class="tools-grid">
+      <button class="card btn" id="btnImportPdf">📄 Import PDF</button>
+      <button class="card btn" id="btnWordPdf">📝 Word to PDF</button>
+      <button class="card btn" id="btnScan">📷 Camera Scan</button>
+      <button class="card btn" id="btnMergePdf">🔗 Merge PDFs</button>
+    </div>
+
+    <div class="main-grid">
+      <main class="card">
+        <div id="dropZone" class="drop-area" tabindex="0" role="button" aria-label="Upload Files">
+          <div style="font-size:32px">📁</div>
+          <p>Drag images here or click to browse</p>
+        </div>
+        
+        <div style="margin-top:10px; background:var(--border); border-radius:2px; overflow:hidden;">
+          <div id="progressBar" class="progress-bar"></div>
+        </div>
+
+        <div id="thumbGrid" class="thumb-grid" aria-live="polite"></div>
+      </main>
+
+      <aside class="card">
+        <h3 style="margin-top:0">PDF Settings</h3>
+        <form id="pdfForm">
+          <div class="form-group">
+            <label>Filename</label>
+            <input type="text" id="fileName" value="my-document" class="form-control">
+          </div>
+          <div class="form-group">
+            <label>Page Format</label>
+            <select id="format" class="form-control">
+              <option value="a4">A4</option>
+              <option value="letter">Letter</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Margin (mm)</label>
+            <input type="number" id="margin" value="10" min="0" max="50" class="form-control">
+          </div>
+          <div class="form-group">
+            <label>Image Quality (0.1 - 1.0)</label>
+            <input type="range" id="quality" min="0.1" max="1.0" step="0.1" value="0.8" style="width:100%">
+          </div>
+          <div class="form-group">
+             <label><input type="checkbox" id="pageNums" checked> Page Numbers</label>
+          </div>
+
+          <hr style="border:0; border-top:1px solid var(--border);">
+
+          <button type="button" id="btnGenerate" class="btn btn-primary" style="width:100%">Download PDF</button>
+          <button type="button" id="btnClear" class="btn btn-secondary" style="width:100%; margin-top:10px;">Clear All</button>
+        </form>
+      </aside>
+    </div>
+  </div>
+
+  <dialog id="camModal" class="modal hidden">
+    <div class="modal-content">
+      <h3>Scanner</h3>
+      <video id="camVideo" autoplay playsinline></video>
+      <div style="display:flex; gap:10px; margin-top:10px;">
+        <button id="btnCapture" class="btn btn-primary" style="flex:1">Capture</button>
+        <button id="btnCloseCam" class="btn btn-secondary" style="flex:1">Close</button>
+      </div>
+    </div>
+  </dialog>
+
+  <div id="toastContainer" class="toast-box"></div>
+
+  <script type="module">
+    const STATE = { images: [], worker: null };
+    const DOM = {
+      drop: document.getElementById('dropZone'),
+      grid: document.getElementById('thumbGrid'),
+      progress: document.getElementById('progressBar'),
+      installBtn: document.getElementById('installBtn')
+    };
+
+    // --- FIX: Robust UUID Generator ---
+    // Agar browser secure context mein nahi hai to fallback use karega
+    const getUUID = () => {
+      if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
+      }
+      return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).substr(2, 9);
+    };
+
+    // Dark Mode Logic
+    const savedTheme = localStorage.getItem('theme') || 'light';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+    document.getElementById('themeToggle').onclick = () => {
+      const current = document.documentElement.getAttribute('data-theme');
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('theme', next);
+    };
+
+    // Initialize Worker
+    if (window.Worker) {
+      STATE.worker = new Worker('worker.js');
+      STATE.worker.onmessage = handleWorkerMessage;
+    }
+
+    // Add Files (Image/Blob)
+    async function addImages(fileList) {
+      if(!fileList.length) return;
+      showToast(`Processing ${fileList.length} files...`);
+
+      for (const file of Array.from(fileList)) {
+        const thumbUrl = await createThumbnail(file);
+        STATE.images.push({
+          id: getUUID(), // FIXED HERE
+          file: file, 
+          thumb: thumbUrl
+        });
+      }
+      renderGrid();
+    }
+
+    async function createThumbnail(blob) {
+      if(window.createImageBitmap) {
+        try {
+          const bmp = await createImageBitmap(blob);
+          const canvas = document.createElement('canvas');
+          const scale = 150 / bmp.width;
+          canvas.width = 150; 
+          canvas.height = bmp.height * scale;
+          canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+          return canvas.toDataURL('image/jpeg', 0.5);
+        } catch(e) { console.warn(e); }
+      }
+      return URL.createObjectURL(blob);
+    }
+
+    function renderGrid() {
+      DOM.grid.innerHTML = '';
+      if(STATE.images.length === 0) {
+         DOM.grid.innerHTML = '<p style="grid-column:1/-1; text-align:center; color:gray;">No images yet.</p>';
+         return;
+      }
+      
+      STATE.images.forEach((img, idx) => {
+        const div = document.createElement('div');
+        div.className = 'thumb-card';
+        div.draggable = true;
+        div.innerHTML = `
+          <button class="remove-btn" onclick="removeImage('${img.id}')">&times;</button>
+          <img src="${img.thumb}" class="thumb-img" loading="lazy">
+          <div style="font-size:10px; text-align:center; margin-top:4px;">Pg ${idx+1}</div>
+        `;
+        
+        div.addEventListener('dragstart', e => e.dataTransfer.setData('idx', idx));
+        div.addEventListener('dragover', e => e.preventDefault());
+        div.addEventListener('drop', e => {
+          e.preventDefault();
+          const from = e.dataTransfer.getData('idx');
+          if(from !== '') moveImage(Number(from), idx);
+        });
+
+        DOM.grid.appendChild(div);
+      });
+    }
+
+    window.removeImage = (id) => {
+      STATE.images = STATE.images.filter(i => i.id !== id);
+      renderGrid();
+    };
+
+    function moveImage(from, to) {
+      const item = STATE.images.splice(from, 1)[0];
+      STATE.images.splice(to, 0, item);
+      renderGrid();
+    }
+
+    document.getElementById('btnGenerate').onclick = () => {
+      if(!STATE.images.length) return showToast('Add images first!', 'error');
+      
+      const settings = {
+        filename: document.getElementById('fileName').value,
+        format: document.getElementById('format').value,
+        margin: Number(document.getElementById('margin').value),
+        quality: Number(document.getElementById('quality').value),
+        pageNums: document.getElementById('pageNums').checked
+      };
+
+      document.getElementById('btnGenerate').disabled = true;
+      document.getElementById('btnGenerate').textContent = 'Processing...';
+
+      STATE.worker.postMessage({
+        type: 'GENERATE',
+        images: STATE.images.map(i => i.file),
+        settings
+      });
+    };
+
+    function handleWorkerMessage(e) {
+      const { type, data, percent, error } = e.data;
+      
+      if(type === 'PROGRESS') {
+        DOM.progress.style.width = percent + '%';
+      } 
+      else if (type === 'DONE') {
+        DOM.progress.style.width = '0%';
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(data.blob);
+        link.download = data.filename + '.pdf';
+        link.click();
+        showToast('PDF Downloaded!', 'success');
+        resetBtn();
+      }
+      else if (type === 'ERROR') {
+        showToast('Error: ' + error, 'error');
+        resetBtn();
+      }
+    }
+    
+    function resetBtn() {
+      const btn = document.getElementById('btnGenerate');
+      btn.disabled = false;
+      btn.textContent = 'Download PDF';
+    }
+
+    document.getElementById('btnImportPdf').onclick = () => document.getElementById('inpPdf').click();
+    document.getElementById('inpPdf').onchange = async (e) => {
+      const file = e.target.files[0];
+      if(!file) return;
+      
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+      const pdf = await pdfjsLib.getDocument(await file.arrayBuffer()).promise;
+      
+      for(let i=1; i<=pdf.numPages; i++){
+         const page = await pdf.getPage(i);
+         const vp = page.getViewport({scale: 1.5});
+         const cvs = document.createElement('canvas');
+         cvs.width = vp.width; cvs.height = vp.height;
+         await page.render({canvasContext: cvs.getContext('2d'), viewport: vp}).promise;
+         
+         cvs.toBlob(b => addImages([b]), 'image/jpeg', 0.8);
+      }
+    };
+
+    document.getElementById('btnWordPdf').onclick = () => document.getElementById('inpWord').click();
+    document.getElementById('inpWord').onchange = async (e) => {
+       const file = e.target.files[0];
+       if(!file) return;
+       const { value } = await mammoth.convertToHtml({arrayBuffer: await file.arrayBuffer()});
+       const html = `<div xmlns="http://www.w3.org/1999/xhtml" style="font-family:sans-serif;background:white;padding:20px;width:800px">${value}</div>`;
+       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="840" height="1100"><foreignObject width="100%" height="100%">${html}</foreignObject></svg>`;
+       const img = new Image();
+       img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+       img.onload = () => {
+         const c = document.createElement('canvas');
+         c.width = 840; c.height = 1100;
+         const ctx = c.getContext('2d');
+         ctx.fillStyle='white'; ctx.fillRect(0,0,840,1100);
+         ctx.drawImage(img,0,0);
+         c.toBlob(b => addImages([b]));
+       }
+    };
+
+    const camModal = document.getElementById('camModal');
+    const video = document.getElementById('camVideo');
+    let stream;
+
+    document.getElementById('btnScan').onclick = async () => {
+      camModal.classList.remove('hidden');
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }});
+        video.srcObject = stream;
+      } catch(err) {
+        showToast("Camera access denied", "error");
+        camModal.classList.add('hidden');
+      }
+    };
+    
+    document.getElementById('btnCapture').onclick = () => {
+      const c = document.createElement('canvas');
+      c.width = video.videoWidth; c.height = video.videoHeight;
+      c.getContext('2d').drawImage(video, 0, 0);
+      c.toBlob(b => {
+        addImages([b]);
+        showToast('Captured');
+      });
+    };
+
+    document.getElementById('btnCloseCam').onclick = () => {
+      camModal.classList.add('hidden');
+      if(stream) {
+        stream.getTracks().forEach(t => t.stop());
+        video.srcObject = null;
+      }
+    };
+
+    function showToast(msg, type='info') {
+      const t = document.createElement('div');
+      t.className = 'toast';
+      t.style.borderLeft = type === 'error' ? '4px solid red' : '4px solid #4cc9f0';
+      t.innerHTML = `<span>${msg}</span>`;
+      document.getElementById('toastContainer').appendChild(t);
+      setTimeout(() => t.remove(), 3000);
+    }
+
+    DOM.drop.onclick = () => document.getElementById('inpImage').click();
+    document.getElementById('inpImage').onchange = (e) => addImages(e.target.files);
+    
+    DOM.drop.addEventListener('dragover', e => { e.preventDefault(); DOM.drop.style.borderColor = 'var(--primary)'; });
+    DOM.drop.addEventListener('dragleave', e => { e.preventDefault(); DOM.drop.style.borderColor = 'var(--border)'; });
+    DOM.drop.addEventListener('drop', e => {
+       e.preventDefault(); DOM.drop.style.borderColor = 'var(--border)';
+       addImages(e.dataTransfer.files);
+    });
+
+    document.getElementById('btnClear').onclick = () => {
+      if(confirm('Clear all?')) { STATE.images = []; renderGrid(); }
+    };
+
+    let deferredPrompt;
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      DOM.installBtn.classList.remove('hidden');
+    });
+    DOM.installBtn.onclick = async () => {
+      if(deferredPrompt) {
+        deferredPrompt.prompt();
+        deferredPrompt = null;
+        DOM.installBtn.classList.add('hidden');
+      }
+    };
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').then(reg => {
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+               const banner = document.getElementById('updateBanner');
+               banner.classList.remove('hidden');
+               document.getElementById('btnRefresh').onclick = () => {
+                 newWorker.postMessage({ type: 'SKIP_WAITING' });
+                 window.location.reload();
+               };
+            }
+          });
+        });
+      });
+    }
+
+  </script>
+</body>
+</html>
